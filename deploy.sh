@@ -160,4 +160,66 @@ EOF
 
 log "✅ Remote Docker container deployed successfully!"
 
+# -------------------------------
+# STEP 7-10 UPDATES START
+# -------------------------------
 
+# Step 7 (Nginx reverse proxy)
+log "🌐 Configuring Nginx as reverse proxy..."
+ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no "$SSH_USER@$SERVER_IP" << EOF
+set -e
+sudo apt-get install -y nginx
+
+# Remove old config if exists
+sudo rm -f /etc/nginx/sites-enabled/hng13-app
+
+# Create new Nginx config
+echo "server {
+    listen 80;
+    server_name _;
+    
+    location / {
+        proxy_pass http://localhost:$APP_PORT;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}" | sudo tee /etc/nginx/sites-available/hng13-app
+
+sudo ln -sf /etc/nginx/sites-available/hng13-app /etc/nginx/sites-enabled/
+sudo nginx -t
+sudo systemctl restart nginx
+EOF
+
+log "✅ Nginx configured successfully, forwarding port 80 to container port $APP_PORT"
+
+# Step 8 (Validate deployment)
+log "🔍 Validating deployment..."
+ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no "$SSH_USER@$SERVER_IP" << EOF
+set -e
+sudo docker ps | grep hng13-container
+curl -f http://localhost:$APP_PORT || { echo "❌ App endpoint check failed"; exit 1; }
+curl -f http://localhost || { echo "❌ Nginx proxy check failed"; exit 1; }
+EOF
+
+log "✅ Deployment validated successfully! App should be accessible at http://$SERVER_IP/"
+
+# Step 10: Idempotency / Optional cleanup
+if [ "$1" = "--cleanup" ]; then
+    log "🧹 Cleanup mode: removing container, Docker image, and Nginx config..."
+    ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no "$SSH_USER@$SERVER_IP" << EOF
+    set -e
+    sudo docker stop hng13-container || true
+    sudo docker rm hng13-container || true
+    sudo docker rmi hng13-app || true
+    sudo rm -f /etc/nginx/sites-enabled/hng13-app
+    sudo systemctl reload nginx || true
+EOF
+    log "✅ Cleanup complete."
+    exit 0
+fi
+
+# -------------------------------
+# STEP 7-10 UPDATES END
+# -------------------------------

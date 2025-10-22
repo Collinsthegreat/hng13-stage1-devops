@@ -14,4 +14,6 @@ RUN if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 EXPOSE 8000
 
 # Run a simple web server (replace this with your app command if you have one)
-CMD ["python3", "-m", "http.server", "8000"]
+#Run the app
+CMD ["python3", "app.py"]
+

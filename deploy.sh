@@ -65,4 +65,99 @@ else
     log "❌ No Dockerfile or docker-compose.yml found. Exiting..."
     exit 1
 fi
+# -------------------------------
+# Step 6: Test SSH connectivity
+# -------------------------------
+
+log "🔐 Testing SSH connection to remote server..."
+
+ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no "$SSH_USER@$SERVER_IP" "echo '✅ SSH connection successful!'" || {
+    log "❌ SSH connection failed. Please check your key, username, or IP."
+    exit 1
+}
+
+log "✅ SSH connectivity confirmed."
+
+# -------------------------------
+# Step 7: Prepare remote environment
+# -------------------------------
+
+log "⚙️ Setting up remote environment..."
+
+ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no "$SSH_USER@$SERVER_IP" << 'EOF'
+set -e
+
+echo "[Remote] 🧩 Checking and installing required tools..."
+
+# Update packages
+sudo apt-get update -y
+
+# Install Docker if not present
+if ! command -v docker &> /dev/null; then
+    echo "[Remote] 🐳 Installing Docker..."
+    sudo apt-get install -y ca-certificates curl gnupg lsb-release
+    sudo mkdir -p /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    echo \
+      "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+      https://download.docker.com/linux/ubuntu \
+      $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+    sudo apt-get update -y
+    sudo apt-get install -y docker-ce docker-ce-cli containerd.io
+    echo "[Remote] ✅ Docker installed successfully!"
+else
+    echo "[Remote] ✅ Docker already installed."
+fi
+
+# Install Docker Compose if not present
+if ! command -v docker-compose &> /dev/null; then
+    echo "[Remote] 🧩 Installing Docker Compose..."
+    sudo curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" \
+        -o /usr/local/bin/docker-compose
+    sudo chmod +x /usr/local/bin/docker-compose
+    echo "[Remote] ✅ Docker Compose installed successfully!"
+else
+    echo "[Remote] ✅ Docker Compose already installed."
+fi
+
+# Start Docker service
+sudo systemctl start docker
+sudo systemctl enable docker
+
+echo "[Remote] 🚀 Remote environment setup complete!"
+EOF
+
+log "✅ Remote environment ready."
+
+# -------------------------------
+# Step 8: Deploy Docker container remotely
+# -------------------------------
+
+log "🚀 Starting remote deployment..."
+
+# Copy project files to the remote server
+log "📦 Uploading project files to server..."
+rsync -avz -e "ssh -i $SSH_KEY -o StrictHostKeyChecking=no" ./ "$SSH_USER@$SERVER_IP":~/app
+
+# SSH into server and deploy container
+ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no "$SSH_USER@$SERVER_IP" << EOF
+set -e
+
+cd ~/app
+
+echo "[Remote] 🐳 Building Docker image..."
+sudo docker build -t hng13-app .
+
+echo "[Remote] 🧹 Removing old container (if exists)..."
+sudo docker stop hng13-container || true
+sudo docker rm hng13-container || true
+
+echo "[Remote] 🚀 Running new container..."
+sudo docker run -d -p $APP_PORT:$APP_PORT --name hng13-container hng13-app
+
+echo "[Remote] ✅ Deployment successful! Container running on port $APP_PORT"
+EOF
+
+log "✅ Remote Docker container deployed successfully!"
+
 

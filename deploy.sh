@@ -34,3 +34,35 @@ if [[ -z "$REPO_URL" || -z "$PAT" || -z "$SSH_USER" || -z "$SERVER_IP" || -z "$S
 fi
 
 log "✅ Inputs received successfully."
+
+# -------------------------------
+# Step 5: Clone or update repository
+# -------------------------------
+
+log "📦 Cloning or updating the repository..."
+
+# Build authenticated repo URL
+AUTH_URL=${REPO_URL/https:\/\//https://${PAT}@}
+
+# Extract repo name from URL
+REPO_NAME=$(basename -s .git "$REPO_URL")
+
+# Clone or update the repo
+if [ -d "$REPO_NAME" ]; then
+    log "🔄 Repository already exists. Pulling latest changes..."
+    cd "$REPO_NAME"
+    git pull origin "$BRANCH" || { log "❌ Failed to pull latest changes."; exit 1; }
+else
+    log "📥 Cloning repository from $REPO_URL..."
+    git clone --branch "$BRANCH" "$AUTH_URL" || { log "❌ Failed to clone repository."; exit 1; }
+    cd "$REPO_NAME"
+fi
+
+# Verify Dockerfile or docker-compose.yml exists
+if [ -f Dockerfile ] || [ -f docker-compose.yml ]; then
+    log "✅ Docker configuration file found."
+else
+    log "❌ No Dockerfile or docker-compose.yml found. Exiting..."
+    exit 1
+fi
+

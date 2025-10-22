@@ -10,6 +10,20 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a $LOG_FILE
 }
 
+# -------------------------------
+# NEW: Enhanced logging with exit codes
+# -------------------------------
+log_exit() {
+    local code=$1
+    local message=$2
+    if [ "$code" -ne 0 ]; then
+        log "❌ $message (Exit code: $code)"
+        exit "$code"
+    else
+        log "✅ $message"
+    fi
+}
+
 # This Traps unexpected errors
 trap 'log "❌ An unexpected error occurred. Exiting."; exit 1' ERR
 
@@ -33,6 +47,24 @@ if [[ -z "$REPO_URL" || -z "$PAT" || -z "$SSH_USER" || -z "$SERVER_IP" || -z "$S
     exit 1
 fi
 
+# -------------------------------
+# NEW: Enhanced Input Validation
+# -------------------------------
+if ! [[ "$REPO_URL" =~ ^https://.+\.git$ ]]; then
+    log "❌ Invalid Git URL format. Exiting."
+    exit 2
+fi
+
+if ! [[ "$SERVER_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+    log "❌ Invalid IP address format. Exiting."
+    exit 3
+fi
+
+if ! [[ "$APP_PORT" =~ ^[0-9]+$ ]] || [ "$APP_PORT" -lt 1 ] || [ "$APP_PORT" -gt 65535 ]; then
+    log "❌ Invalid application port. Must be 1-65535. Exiting."
+    exit 4
+fi
+
 log "✅ Inputs received successfully."
 
 # -------------------------------
@@ -51,10 +83,10 @@ REPO_NAME=$(basename -s .git "$REPO_URL")
 if [ -d "$REPO_NAME" ]; then
     log "🔄 Repository already exists. Pulling latest changes..."
     cd "$REPO_NAME"
-    git pull origin "$BRANCH" || { log "❌ Failed to pull latest changes."; exit 1; }
+    git pull origin "$BRANCH" || log_exit 5 "Failed to pull latest changes"
 else
     log "📥 Cloning repository from $REPO_URL..."
-    git clone --branch "$BRANCH" "$AUTH_URL" || { log "❌ Failed to clone repository."; exit 1; }
+    git clone --branch "$BRANCH" "$AUTH_URL" || log_exit 6 "Failed to clone repository"
     cd "$REPO_NAME"
 fi
 
@@ -63,18 +95,16 @@ if [ -f Dockerfile ] || [ -f docker-compose.yml ]; then
     log "✅ Docker configuration file found."
 else
     log "❌ No Dockerfile or docker-compose.yml found. Exiting..."
-    exit 1
+    exit 7
 fi
+
 # -------------------------------
 # Step 6: Test SSH connectivity
 # -------------------------------
 
 log "🔐 Testing SSH connection to remote server..."
 
-ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no "$SSH_USER@$SERVER_IP" "echo '✅ SSH connection successful!'" || {
-    log "❌ SSH connection failed. Please check your key, username, or IP."
-    exit 1
-}
+ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no "$SSH_USER@$SERVER_IP" "echo '✅ SSH connection successful!'" || log_exit 8 "SSH connection failed"
 
 log "✅ SSH connectivity confirmed."
 
@@ -161,31 +191,39 @@ EOF
 log "✅ Remote Docker container deployed successfully!"
 
 # -------------------------------
-# STEP 7-10 UPDATES START
+# NEW: SSL placeholder for Nginx
 # -------------------------------
+SSL_ENABLED=false   # Change to true if you want to enable SSL
+if [ "$SSL_ENABLED" = true ]; then
+    ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no "$SSH_USER@$SERVER_IP" << 'EOF'
+    # This is a placeholder for SSL setup
+    sudo apt-get install -y certbot python3-certbot-nginx
+    # Example self-signed cert could be generated here if needed
+    # sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout /etc/ssl/private/nginx-selfsigned.key \
+    #     -out /etc/ssl/certs/nginx-selfsigned.crt -subj "/CN=localhost"
+EOF
+    log "✅ SSL setup placeholder executed."
+fi
 
+# -------------------------------
 # Step 7 (Nginx reverse proxy)
+# -------------------------------
 log "🌐 Configuring Nginx as reverse proxy..."
 ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no "$SSH_USER@$SERVER_IP" << EOF
-set -e
-sudo apt-get install -y nginx
-
-# Remove old config if exists
-sudo rm -f /etc/nginx/sites-enabled/hng13-app
-
-# Create new Nginx config
-echo "server {
+sudo tee /etc/nginx/sites-available/hng13-app > /dev/null << 'EOL'
+server {
     listen 80;
     server_name _;
-    
+
     location / {
-        proxy_pass http://localhost:$APP_PORT;
+        proxy_pass http://127.0.0.1:$APP_PORT;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
     }
-}" | sudo tee /etc/nginx/sites-available/hng13-app
+}
+EOL
 
 sudo ln -sf /etc/nginx/sites-available/hng13-app /etc/nginx/sites-enabled/
 sudo nginx -t
@@ -219,7 +257,3 @@ EOF
     log "✅ Cleanup complete."
     exit 0
 fi
-
-# -------------------------------
-# STEP 7-10 UPDATES END
-# -------------------------------

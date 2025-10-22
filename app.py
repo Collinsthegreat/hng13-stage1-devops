@@ -1,5 +1,6 @@
 # app.py
 from http.server import BaseHTTPRequestHandler, HTTPServer
+import json
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -11,7 +12,6 @@ class handler(BaseHTTPRequestHandler):
             "current_datetime": "2025-10-22T03:50:00Z",
             "github_url": "https://github.com/Collinsthegreat/hng13-stage1-devops"
         }
-        import json
         self.wfile.write(json.dumps(message).encode())
 
 if __name__ == "__main__":
